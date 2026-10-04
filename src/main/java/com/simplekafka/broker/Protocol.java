@@ -1,0 +1,240 @@
+package com.simplekafka.broker;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
+import java.util.ArrayList;
+import java.util.List;
+
+public class Protocol {
+
+    // Client request types
+    public static final byte PRODUCE = 0x01;
+    public static final byte FETCH = 0x02;
+    public static final byte METADATA = 0x03;
+    public static final byte CREATE_TOPIC = 0x04;
+
+    // Broker response types
+    public static final byte PRODUCE_RESPONSE = 0x11;
+    public static final byte FETCH_RESPONSE = 0x12;
+    public static final byte METADATA_RESPONSE = 0x13;
+    public static final byte CREATE_TOPIC_RESPONSE = 0x14;
+    public static final byte ERROR_RESPONSE = 0x1F;
+
+    // Internal broker comms
+    public static final byte REPLICATE = 0x21;
+    public static final byte REPLICATE_ACK = 0x22;
+    public static final byte TOPIC_NOTIFICATION = 0x23;
+
+    // Sends an error message response
+    public static void sendErrorResponse(SocketChannel channel, String errorMessage) throws IOException {
+        ByteBuffer buffer = ByteBuffer.allocate(3 + errorMessage.length());
+        buffer.put(ERROR_RESPONSE);
+        buffer.putShort((short) errorMessage.length());
+        buffer.put(errorMessage.getBytes());
+        buffer.flip();
+        channel.write(buffer);
+    }
+
+    /**
+     * Encoding different operations
+     */
+
+    public static ByteBuffer encodeProduceRequest(String topic, int partition, byte[] message) {
+        ByteBuffer buffer = ByteBuffer.allocate(11 + message.length);
+        buffer.put(PRODUCE);
+        buffer.putShort((short) topic.length());
+        buffer.put(topic.getBytes());
+        buffer.putInt(partition);
+        buffer.putInt(message.length);
+        buffer.put(message);
+        buffer.flip();
+        return buffer;
+    }
+
+    public static ByteBuffer encodeFetchRequest(String topic, int partition, long offset, int maxBytes) {
+        ByteBuffer buffer = ByteBuffer.allocate(19 + message.length);
+        buffer.put(FETCH);
+        buffer.putShort((short) topic.length());
+        buffer.put(topic.getBytes());
+        buffer.putInt(partition);
+        buffer.putLong(offset);
+        buffer.putInt(maxBytes);
+        buffer.flip();
+        return buffer;
+    }
+
+    public static ByteBuffer encodeMetadataRequest() {
+        ByteBuffer buffer = ByteBuffer.allocate(1);
+        buffer.put(METADATA);
+        buffer.flip();
+        return buffer;
+    }
+
+    public static ByteBuffer encodeCreateTopicRequest(String topic, int numPartitions, short replcationFactor) {
+        ByteBuffer buffer = ByteBuffer.allocate(9 + topic.length());\
+        buffer.put(CREATE_TOPIC);
+        buffer.putShort((short) topic.length());
+        buffer.put(topic.getBytes());
+        buffer.putInt(numPartitions);
+        buffer.putShort(replcationFactor);
+        buffer.flip();
+        return buffer;
+    }
+
+    public static ByteBuffer encodeReplicateRequest(String topic, int partition, long offset, byte[] message) {
+        ByteBuffer buffer = ByteBuffer.allocate(17 + topic.length() + message.length);
+        buffer.put(REPLICATE);
+        buffer.putShort((short) topic.length());
+        buffer.put(topic.getBytes());
+        buffer.putInt(partition);
+        buffer.putLong(offset);
+        buffer.putInt(message.length);
+        buffer.put(message);
+        buffer.flip();
+        return buffer;
+    }
+
+    public static ByteBuffer encodeTopicNotification(String topic) {
+        ByteBuffer buffer = ByteBuffer.allocate(3 + topic.length());
+        buffer.put(TOPIC_NOTIFICATION);
+        buffer.putShort((short) topic.length());
+        buffer.put(topic.getBytes());
+        buffer.flip();
+        return buffer;
+    }
+
+    /**
+     * Decodes different operations
+     */
+
+    public static ProduceResult decodeProduceResponse(ByteBuffer buffer) {
+        byte responseType = buffer.get();
+        if (responseType != PRODUCE_RESPONSE) {
+            if (responseType == ERROR_RESPONSE) {
+                short errorLength = buffer.getShort();
+                byte[] errorBytes = new byte[errorLength];
+                buffer.get(errorBytes);
+                String error = new String(errorBytes);
+                return new ProduceResult(-1, error);
+            }
+            return new ProduceResult(-1, "Invalid response type");
+        }
+
+        long offset = buffer.getLong();
+        byte status = buffer.get();
+
+        return new ProduceResult(offset, status == 0 ? null: "Produce failed");
+    }
+
+    public static FetchResult decodeFetchResponse(ByteBuffer buffer) {
+        byte responseType = buffer.get();
+        if (responseType != FETCH_RESPONSE) {
+            if (responseType == ERROR_RESPONSE) {
+                short errorLength = buffer.getShort();
+                byte[] errorBytes = new byte[errorLength];
+                buffer.get(errorBytes);
+                String error = new String(errorBytes);
+                return new FetchResult(new byte[0][], error);
+            }
+            return new FetchResult(new byte[0][], "Invalid response type");
+        }
+
+        int messagesCount = buffer.getInt();
+        byte[][] messages = new byte[messagesCount][];
+
+        for (int i = 0; i < messagesCount; i++) {
+            long offset = buffer.getLong();
+            int messageSize = buffer.getInt();
+            messages[i] = new byte[messageSize];
+            buffer.get(messages[i]);
+        }
+
+        return new FetchResult(messages, null);
+    }
+
+    public static MetadataResult decodeMetadataResponse(ByteBuffer buffer) {
+        byte responseType = buffer.get();
+        if (responseType != METADATA_RESPONSE) {
+            if (responseType == ERROR_RESPONSE) {
+                short errorLength = buffer.getShort();
+                byte[] errorBytes = new byte[errorLength];
+                buffer.get(errorBytes);
+                String error = new String(errorBytes);
+                return new MetadataResult(new ArrayList<>(), new ArrayList<>(), error);
+            }
+            return new MetadataResult(new ArrayList<>(), new ArrayList<>(), "Invalid response type");
+        }
+
+        int brokerCount = buffer.getInt();
+        List<BrokerInfo> brokers = new ArrayList<>();
+
+        for (int i = 0; i < brokerCount; i++) {
+            int brokerId = buffer.getInt();
+            short hostLength = buffer.getShort();
+            byte[] hostBytes = new byte[hostLength];
+            buffer.get(hostBytes);
+            String host = new String(hostBytes);
+            int port = buffer.getInt();
+
+            brokers.add(new BrokerInfo(brokerId, host, port));
+        }
+
+        int topicCount = buffer.getInt();
+        List<TopicMetadata> topics = new ArrayList<>();
+
+        for (int i = 0; i < topicCount; i++) {
+            short topicLength = buffer.getShort();
+            byte[] topicBytes = new byte[topicLength];
+            buffer.get(topicBytes);
+            String topicName = new String(topicBytes);
+
+            int partitionCount = buffer.getInt();
+            List<PartitionMetadata> partitions = new ArrayList<>();
+
+            for (int j = 0; j < partitionCount; j++) {
+                int partitionId = buffer.getInt();
+                int leaderId = buffer.getInt();
+
+                int replicas = buffer.getInt();
+                List<Integer> replicasList = new ArrayList<>();
+
+                for (int k = 0; k < replicas; k++) {
+                    replicasList.add(buffer.getInt());
+                }
+                partitions.add(new PartitionMetadata(partitionId, leaderId, replicasList));
+            }
+            topics.add(new TopicMetadata(topicName, partitions));
+        }
+        return new MetadataResult(brokers, topics, null);
+    }
+
+    public record ProduceResult(long offset, String error) {
+
+        public boolean isSuccess() {
+                return error == null;
+            }
+        }
+
+    public record FetchResult(byte[][] messages, String error) {
+
+        public int getMessageCount() {
+                return messages.length;
+            }
+
+            public boolean isSuccess() {
+                return error == null;
+            }
+        }
+
+
+    public record TopicMetadata(String name, List<PartitionMetadata> partitions) {}
+
+    public record MetadataResult(List<BrokerInfo> brokers, List<TopicMetadata> topics, String error) {
+        public boolean isSuccess() {
+            return error == null;
+        }
+    }
+
+    public record PartitionMetadata(int id, int leader, List<Integer> replicas) {}
+}
