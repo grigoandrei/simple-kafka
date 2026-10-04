@@ -53,7 +53,7 @@ public class Protocol {
     }
 
     public static ByteBuffer encodeFetchRequest(String topic, int partition, long offset, int maxBytes) {
-        ByteBuffer buffer = ByteBuffer.allocate(19 + message.length);
+        ByteBuffer buffer = ByteBuffer.allocate(19 + topic.length());
         buffer.put(FETCH);
         buffer.putShort((short) topic.length());
         buffer.put(topic.getBytes());
@@ -72,7 +72,7 @@ public class Protocol {
     }
 
     public static ByteBuffer encodeCreateTopicRequest(String topic, int numPartitions, short replcationFactor) {
-        ByteBuffer buffer = ByteBuffer.allocate(9 + topic.length());\
+        ByteBuffer buffer = ByteBuffer.allocate(9 + topic.length());
         buffer.put(CREATE_TOPIC);
         buffer.putShort((short) topic.length());
         buffer.put(topic.getBytes());
